@@ -1,10 +1,14 @@
 /**
- * Canned, zero-cost reply engine.
- *
- * Matching is deliberately dumb: the first rule whose keywords all appear in
- * the message wins. When VITE_API_BASE_URL is set later, swap `getReply` for a
- * fetch to that backend and the rest of the widget keeps working unchanged.
+ * All non-UI logic for the chat widget: branding, canned answers, input
+ * validation and the bridge back to whatever embeds us. ChatWidget.jsx should
+ * stay pure markup + state, so anything with a rule in it belongs here.
  */
+
+export const BOT_NAME = import.meta.env.VITE_BOT_NAME || 'ABC Assist';
+export const COMPANY_NAME = import.meta.env.VITE_COMPANY_NAME || 'ABC Insurance Ltd.';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
+
+export const MAX_MESSAGE_LENGTH = 300;
 
 export const SUGGESTIONS = [
   'What is the leave policy?',
@@ -14,11 +18,11 @@ export const SUGGESTIONS = [
   'Check my claim status',
 ];
 
+/** First rule whose keyword group fully appears in the message wins. */
 const RULES = [
   {
     keywords: [['hi'], ['hello'], ['hey'], ['good morning'], ['good evening'], ['namaste']],
-    reply:
-      "Hi! I'm ABC Assist, your ABC Insurance helper. I can answer questions about leave, sales policy, targets, training material and claims. Try one of the suggestions below.",
+    reply: `Hi! I'm ${BOT_NAME}, your ${COMPANY_NAME} helper. I can answer questions about leave, sales policy, targets, training material and claims. Try one of the suggestions below.`,
   },
   {
     keywords: [['next', 'leave'], ['upcoming', 'leave'], ['holiday']],
@@ -57,20 +61,60 @@ const RULES = [
   },
   {
     keywords: [['thank'], ['thanks'], ['bye']],
-    reply: 'Happy to help! Ping me any time you need something from ABC Insurance.',
+    reply: `Happy to help! Ping me any time you need something from ${COMPANY_NAME}.`,
   },
 ];
 
 const FALLBACK =
   "I don't have an answer for that yet. I can help with leave policy, sales policy, sales targets, historical data, training documents and claim status.";
 
-export function getReply(message) {
-  const text = message.toLowerCase();
-
-  for (const rule of RULES) {
-    const matched = rule.keywords.some((group) => group.every((word) => text.includes(word)));
-    if (matched) return rule.reply;
-  }
-
-  return FALLBACK;
+function cannedReply(text) {
+  const lower = text.toLowerCase();
+  const rule = RULES.find((r) => r.keywords.some((group) => group.every((w) => lower.includes(w))));
+  return rule ? rule.reply : FALLBACK;
 }
+
+/**
+ * Returns the cleaned message, or an `error` string the UI can show as-is.
+ */
+export function validateMessage(raw) {
+  const text = raw.trim().replace(/\s+/g, ' ');
+  if (!text) return { error: 'Type a message first.' };
+  if (text.length > MAX_MESSAGE_LENGTH) {
+    return { error: `Please keep it under ${MAX_MESSAGE_LENGTH} characters.` };
+  }
+  return { text };
+}
+
+/** Uses the backend when one is configured, otherwise the canned engine. */
+export async function askBot(text) {
+  if (!API_BASE_URL) return cannedReply(text);
+
+  try {
+    const response = await fetch(`${API_BASE_URL.replace(/\/$/, '')}/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: text }),
+    });
+    if (!response.ok) throw new Error(`Bad status ${response.status}`);
+    const data = await response.json();
+    return data.reply || cannedReply(text);
+  } catch (error) {
+    console.warn('[widget] backend unreachable, falling back to canned reply', error);
+    return cannedReply(text);
+  }
+}
+
+/** Bridge to the host: a React Native WebView, or a parent frame on the web. */
+export function notifyHost(type) {
+  const message = JSON.stringify({ source: 'abc-chat-widget', type });
+
+  if (window.ReactNativeWebView) {
+    window.ReactNativeWebView.postMessage(message);
+  } else if (window.parent !== window) {
+    window.parent.postMessage(message, '*');
+  }
+}
+
+export const clockTime = () =>
+  new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
