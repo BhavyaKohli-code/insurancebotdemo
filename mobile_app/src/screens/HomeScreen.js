@@ -32,7 +32,7 @@ export default function HomeScreen({ navigation }) {
         </ScrollView>
       </SafeAreaView>
 
-      {/* Chat UI lives in web_widget and is loaded in a WebView */}
+      {/* Chat UI lives in insurance_bot_web_widget, loaded in a WebView */}
       <ChatbotWidget />
 
     </View>

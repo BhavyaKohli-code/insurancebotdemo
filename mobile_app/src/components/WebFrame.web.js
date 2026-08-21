@@ -4,7 +4,7 @@ import { useEffect } from 'react';
  * Web embed for the chat widget. react-native-web renders to the DOM, so a
  * plain iframe is the right primitive here.
  */
-export default function WebFrame({ uri, onLoadEnd, onError, onMessage }) {
+export default function WebFrame({ uri, onMessage }) {
   useEffect(() => {
     if (!onMessage) return undefined;
 
@@ -16,10 +16,7 @@ export default function WebFrame({ uri, onLoadEnd, onError, onMessage }) {
   return (
     <iframe
       src={uri}
-      title="ABC Assist"
-      onLoad={onLoadEnd}
-      onError={onError}
-      style={{ flex: 1, width: '100%', height: '100%', border: 'none', background: '#F6F8FC' }}
+      style={{ width: '100%', height: '100%', border: 'none', background: '#F8FAFC' }}
     />
   );
 }

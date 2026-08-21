@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -15,108 +15,73 @@ import { WIDGET_URL } from '../config';
 const LOAD_TIMEOUT_MS = 8000;
 
 /**
- * Floating bubble that opens the chat widget hosted by ../../web_widget.
- * All chat UI and behaviour lives in the web app — this file only frames it,
- * so widget changes never require a mobile release.
+ * Floating bubble that opens the chat widget hosted by
+ * ../../insurance_bot_web_widget.
+ * Every word the user reads lives in the web widget, so this file carries no
+ * copy: the only native UI is a spinner while the frame loads and a retry
+ * glyph if it never arrives.
  */
 export default function ChatbotWidget() {
   const [open, setOpen] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [failed, setFailed] = useState(false);
-  const [reason, setReason] = useState('');
+  const [status, setStatus] = useState('loading'); // loading | ready | failed
 
-  const openChat = useCallback(() => {
-    console.log('Chatbot clicked — loading widget from', WIDGET_URL);
-    setLoading(true);
-    setFailed(false);
-    setReason('');
-    setOpen(true);
-  }, []);
-
-  // Never leave the user staring at a spinner: give up after a few seconds.
-  useEffect(() => {
-    if (!open || !loading) return undefined;
-
-    const timer = setTimeout(() => {
-      setLoading(false);
-      setFailed(true);
-      setReason('Timed out waiting for the widget to respond.');
-    }, LOAD_TIMEOUT_MS);
-    return () => clearTimeout(timer);
-  }, [open, loading]);
-
-  // Messages posted by the widget (ReactNativeWebView.postMessage on native,
-  // window.parent.postMessage in the web iframe).
-  const onMessage = useCallback((data) => {
-    let payload;
+  // The widget posts { source: 'abc-chat-widget', type } once it mounts and
+  // again when its header X is tapped. Anything else is not ours.
+  const onMessage = (data) => {
     try {
-      payload = typeof data === 'string' ? JSON.parse(data) : data;
+      const payload = typeof data === 'string' ? JSON.parse(data) : data;
+      if (payload?.source !== 'abc-chat-widget') return;
+      if (payload.type === 'ready') setStatus('ready');
+      if (payload.type === 'close') setOpen(false);
     } catch {
-      return;
+      /* not our message */
     }
-    if (!payload || payload.source !== 'abc-chat-widget') return;
+  };
 
-    if (payload.type === 'ready') {
-      setLoading(false);
-      setFailed(false);
-    }
-    if (payload.type === 'close') setOpen(false);
-  }, []);
+  // Never leave the user on a spinner forever.
+  useEffect(() => {
+    if (!open || status !== 'loading') return undefined;
+    const timer = setTimeout(() => setStatus('failed'), LOAD_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [open, status]);
 
-  const onLoadEnd = useCallback(() => setLoading(false), []);
-  const onError = useCallback((description) => {
-    setLoading(false);
-    setFailed(true);
-    if (description) setReason(String(description));
-  }, []);
+  const show = () => {
+    setStatus('loading');
+    setOpen(true);
+  };
 
   return (
     <>
       <Pressable
-        style={({ pressed }) => [styles.bubble, pressed && styles.pressed]}
-        onPress={openChat}
+        style={({ pressed }) => [styles.bubble, pressed && { opacity: 0.85 }]}
+        onPress={show}
         accessibilityLabel="Open chatbot"
       >
-        <Text style={styles.bubbleIcon}>💬</Text>
+        <Text style={styles.icon}>💬</Text>
       </Pressable>
 
       <Modal visible={open} animationType="slide" transparent onRequestClose={() => setOpen(false)}>
         <Pressable style={styles.backdrop} onPress={() => setOpen(false)} />
 
+        {/* Shrinks the sheet instead of letting the keyboard cover the composer. */}
         <KeyboardAvoidingView
-          style={styles.sheetWrapper}
+          style={styles.wrapper}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           pointerEvents="box-none"
         >
           <View style={styles.sheet}>
-            {failed ? (
-              <View style={styles.errorBox}>
-                <Text style={styles.errorTitle}>Chat unavailable</Text>
-                <Text style={styles.errorText}>
-                  Could not load the widget from {WIDGET_URL}. Start it with `npm run dev` inside
-                  web_widget, then check EXPO_PUBLIC_WIDGET_URL in mobile_app/.env.
-                </Text>
-                {reason ? <Text style={styles.errorReason}>{reason}</Text> : null}
-                <Pressable style={styles.retryButton} onPress={openChat}>
-                  <Text style={styles.retryText}>Retry</Text>
-                </Pressable>
-              </View>
-            ) : (
-              <>
-                <WebFrame
-                  uri={WIDGET_URL}
-                  style={styles.frame}
-                  onLoadEnd={onLoadEnd}
-                  onError={onError}
-                  onMessage={onMessage}
-                />
-                {loading && (
-                  <View style={styles.loader} pointerEvents="none">
-                    <ActivityIndicator size="large" color="#0B3C7A" />
-                    <Text style={styles.loaderText}>Connecting to ABC Assist…</Text>
-                  </View>
+            <WebFrame uri={WIDGET_URL} style={styles.frame} onMessage={onMessage} />
+
+            {status !== 'ready' && (
+              <View style={styles.overlay}>
+                {status === 'loading' ? (
+                  <ActivityIndicator size="large" color="#0B3C7A" />
+                ) : (
+                  <Pressable onPress={show} accessibilityLabel="Retry">
+                    <Text style={styles.retry}>↻</Text>
+                  </Pressable>
                 )}
-              </>
+              </View>
             )}
           </View>
         </KeyboardAvoidingView>
@@ -136,51 +101,25 @@ const styles = StyleSheet.create({
     backgroundColor: '#0B3C7A',
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.9)',
-    shadowColor: '#0B1B33',
-    shadowOpacity: 0.35,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 10,
+    elevation: 8,
   },
-  pressed: { opacity: 0.9, transform: [{ scale: 0.96 }] },
-  bubbleIcon: { fontSize: 26 },
+  icon: { fontSize: 26 },
   backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(8,18,35,0.45)' },
-  // Padding on the wrapper (not margins on the sheet) keeps the card centred:
-  // width '100%' then resolves against the already-padded content box.
-  sheetWrapper: { flex: 1, justifyContent: 'flex-end', alignItems: 'center', padding: 10 },
+  wrapper: { flex: 1, justifyContent: 'flex-end', alignItems: 'center', padding: 10 },
   sheet: {
     width: '100%',
     maxWidth: 440,
     height: '86%',
     borderRadius: 26,
     overflow: 'hidden',
-    backgroundColor: '#FFFFFF',
-    shadowColor: '#0B1B33',
-    shadowOpacity: 0.32,
-    shadowRadius: 28,
-    shadowOffset: { width: 0, height: 14 },
-    elevation: 16,
+    backgroundColor: '#F8FAFC',
   },
-  frame: { flex: 1, backgroundColor: '#F6F8FC' },
-  loader: {
+  frame: { flex: 1, backgroundColor: '#F8FAFC' },
+  overlay: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#F6F8FC',
+    backgroundColor: '#F8FAFC',
   },
-  loaderText: { marginTop: 10, color: '#6B7280', fontSize: 13 },
-  errorBox: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 26 },
-  errorTitle: { fontSize: 17, fontWeight: '700', color: '#1F2937' },
-  errorText: { marginTop: 8, fontSize: 13, color: '#6B7280', textAlign: 'center', lineHeight: 20 },
-  errorReason: { marginTop: 10, fontSize: 12, color: '#B91C1C', textAlign: 'center' },
-  retryButton: {
-    marginTop: 18,
-    backgroundColor: '#0B3C7A',
-    paddingHorizontal: 22,
-    paddingVertical: 11,
-    borderRadius: 10,
-  },
-  retryText: { color: '#FFFFFF', fontWeight: '700' },
+  retry: { fontSize: 40, color: '#0B3C7A' },
 });
